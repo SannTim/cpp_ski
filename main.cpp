@@ -74,7 +74,6 @@ int main(int argc, char* argv[]) {
             MPI_Bcast(&received_marker, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             if (received_marker == rank) {
-                // Если процесс получил маркер, он заходит в критическую секцию
                 enter_critical_section(rank);
                 std::cout << "Process " << rank << " releasing marker back to process 0" << std::endl;
                 MPI_Send(nullptr, 0, MPI_BYTE, 0, TAG_RELEASE, MPI_COMM_WORLD);
