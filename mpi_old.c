@@ -15,10 +15,10 @@ float eps;
 float *A,  *B, *A_local, *B_local;
 int start, stop, startresid, stopresid;
 
-void relax(int size, int rank, int local_rows);
-void resid(int rank);
+void relax();
+void resid();
 void init();
-void verify(FILE* outf); 
+void verify(); 
 int *recvcounts, *displs;
 void gather_B_and_update_A(int local_rows, int rank, int size) {
     MPI_Gatherv(B_local, N*local_rows, MPI_FLOAT, B, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
