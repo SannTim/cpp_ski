@@ -4,3 +4,5 @@ main.aux
 main.bbl
 main.blg
 main.log
+*.txt
+*.bin

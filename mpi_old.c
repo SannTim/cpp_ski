@@ -15,10 +15,16 @@ float eps;
 float *A,  *B, *A_local, *B_local;
 int start, stop, startresid, stopresid;
 
-void relax();
-void resid();
+void relax(int size, int rank, int local_rows);
+void resid(int rank);
 void init();
-void verify(); 
+void verify(FILE* outf);
+
+void save_checkpoint(int rank, int size, int it);
+int load_checkpoint(int rank, int size, int* it);
+void update_parameters(int size, int rank, int N, int* recvcounts, int* displs, 
+                       int* start, int* stop, int* startresid, int* stopresid);
+
 int *recvcounts, *displs;
 void gather_B_and_update_A(int local_rows, int rank, int size) {
     MPI_Gatherv(B_local, N*local_rows, MPI_FLOAT, B, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
@@ -71,44 +77,12 @@ int main(int an, char **as)
     
     recvcounts = (int*)malloc(size*sizeof(int));
     displs = (int*)malloc(size*sizeof(int));
-    displs[0] = 0;
-    recvcounts[0] = local_rows*N;
-    for (i = 1; i < size; i++){
-        if (N%size > i)
-            recvcounts[i] = (N/size + 1)*N;
-        else
-            recvcounts[i] = (N/size)*N;
-        
-        displs[i] = displs[i-1] + recvcounts[i-1];
-    }
-    // заполение данных о начале и конце для relax и resid
-    
-    if (rank == 0) 
-        start = 2;
-    else {
-        start = rank*(N/size);
-        if (N%size > rank){
-            start += rank;
-        }
-        else {
-            start += N%size;
-        }
-    }
-        
-    if (rank == size - 1)
-        stop = N-3;
-    else {
-        if (rank < N%size)
-            stop = (rank+1)*(N/size)+rank;
-        else stop = (rank+1)*(N/size)+N%size-1;
-    }
+	update_parameters(size, rank, N, recvcounts, displs, &start, &stop, &startresid, &stopresid);
 
-    startresid = rank == 0 ? start - 1: start;
-    stopresid = rank == size - 1 ? stop + 1: stop;
     // printf("%d : startresid = %d, stopresid = %d \n",rank, startresid, stopresid);    
 	int it;
 	init();
-    // MPI_Scatter(A[0], local_rows * N, MPI_FLOAT, local_A[0], local_rows * N, MPI_FLOAT, 0, MPI_COMM_WORLD);
+	save_checkpoint(rank, size, it);
 	for(it=1; it<=itmax; it++)
 	{
 		eps = 0.;
@@ -117,17 +91,12 @@ int main(int an, char **as)
         resid(rank);
         gather_B_and_update_A(local_rows, rank, size);
         if (rank == 0){
-            // if (it == 1){
-            //     for (i = 0; i < N; i++){
-			// 	for (j = 0; j < N; j++)
-			// 		printf("%f", B[i*N + j]);
-			// 	printf("\n");
-			// }
-            // }
+
             fprintf(outf, "it=%4i   eps=%f\n", it,eps);
         }
         // printf("%d : %d \n", rank , it);
 		if (eps < maxeps) break;
+		save_checkpoint(rank, size, it);
 	}
     if (rank == 0)
 	verify(outf);
@@ -205,4 +174,74 @@ void verify(FILE* outf)
 		s=s+A[i*N + j]*(i+1)*(j+1)/(N*N);
 	}
 	fprintf(outf, "  S = %f\n",s);
+}
+
+
+void save_checkpoint(int rank, int size, int it) {
+    MPI_File checkpoint;
+    MPI_File_open(MPI_COMM_WORLD, "checkpoint.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &checkpoint);
+    MPI_File_set_view(checkpoint, rank * N * N * sizeof(float) / size, MPI_FLOAT, MPI_FLOAT, "native", MPI_INFO_NULL);
+    MPI_File_write_all(checkpoint, A + displs[rank], recvcounts[rank], MPI_FLOAT, MPI_STATUS_IGNORE);
+    if (rank == 0) {
+        MPI_File_write_at(checkpoint, N * N * sizeof(float), &it, 1, MPI_INT, MPI_STATUS_IGNORE);
+    }
+    MPI_File_close(&checkpoint);
+}
+
+int load_checkpoint(int rank, int size, int* it) {
+    MPI_File checkpoint;
+    if (MPI_File_open(MPI_COMM_WORLD, "checkpoint.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &checkpoint) != MPI_SUCCESS) {
+        return 0;
+    }
+    MPI_File_set_view(checkpoint, rank * N * N * sizeof(float) / size, MPI_FLOAT, MPI_FLOAT, "native", MPI_INFO_NULL);
+    MPI_File_read_all(checkpoint, A + displs[rank], recvcounts[rank], MPI_FLOAT, MPI_STATUS_IGNORE);
+    if (rank == 0) {
+        MPI_File_read_at(checkpoint, N * N * sizeof(float), it, 1, MPI_INT, MPI_STATUS_IGNORE);
+    }
+    MPI_File_close(&checkpoint);
+    return 1;
+}
+
+void update_parameters(int size, int rank, int N, int* recvcounts, int* displs, 
+                       int* start, int* stop, int* startresid, int* stopresid) {
+    // Обновление массивов recvcounts и displs
+    recvcounts[0] = (N / size + (N % size > 0 ? 1 : 0)) * N;
+    displs[0] = 0;
+
+    for (int i = 1; i < size; i++) {
+        if (N % size > i) {
+            recvcounts[i] = (N / size + 1) * N;
+        } else {
+            recvcounts[i] = (N / size) * N;
+        }
+
+        displs[i] = displs[i - 1] + recvcounts[i - 1];
+    }
+
+    // Обновление start
+    if (rank == 0) {
+        *start = 2;
+    } else {
+        *start = rank * (N / size);
+        if (N % size > rank) {
+            *start += rank;
+        } else {
+            *start += N % size;
+        }
+    }
+
+    // Обновление stop
+    if (rank == size - 1) {
+        *stop = N - 3;
+    } else {
+        if (rank < N % size) {
+            *stop = (rank + 1) * (N / size) + rank;
+        } else {
+            *stop = (rank + 1) * (N / size) + N % size - 1;
+        }
+    }
+
+    // Обновление startresid и stopresid
+    *startresid = (rank == 0) ? *start - 1 : *start;
+    *stopresid = (rank == size - 1) ? *stop + 1 : *stop;
 }
