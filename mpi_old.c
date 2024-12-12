@@ -14,18 +14,23 @@ int i,j,k;
 float eps;
 float *A,  *B, *A_local, *B_local;
 int start, stop, startresid, stopresid;
+int it;
 
+MPI_Comm global_comm;
+MPI_Errhandler err_handler;
 void relax(int size, int rank, int local_rows);
 void resid(int rank);
 void init();
 void verify(FILE* outf);
-
+int rank, size;
 void save_checkpoint(int rank, int size, int it);
 int load_checkpoint(int rank, int size, int* it);
 void update_parameters(int size, int rank, int N, int* recvcounts, int* displs, 
                        int* start, int* stop, int* startresid, int* stopresid);
-
+int recover_from_failure(int* rank, int* size, int *it);
 int *recvcounts, *displs;
+void error_handler_function(MPI_Comm* comm, int* errcode, ...);
+
 void gather_B_and_update_A(int local_rows, int rank, int size) {
     MPI_Gatherv(B_local, N*local_rows, MPI_FLOAT, B, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
     // printf("%d : tut\n", rank);
@@ -43,11 +48,12 @@ int main(int an, char **as)
     
     char** for_mpi = as + 4;
     MPI_Init(&an, &for_mpi);
-    int rank, size;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     
+	MPI_Comm_create_errhandler(error_handler_function, &err_handler);
+    MPI_Comm_set_errhandler(MPI_COMM_WORLD, err_handler);
 
 	FILE * outf = fopen(as[3], "w");
     
@@ -80,25 +86,30 @@ int main(int an, char **as)
 	update_parameters(size, rank, N, recvcounts, displs, &start, &stop, &startresid, &stopresid);
 
     // printf("%d : startresid = %d, stopresid = %d \n",rank, startresid, stopresid);    
-	int it;
 	init();
 	save_checkpoint(rank, size, it);
-	for(it=1; it<=itmax; it++)
-	{
-		eps = 0.;
-        // printf("%d : %d \n", rank , it);
-		relax(size, rank, local_rows);
+	
+	for (it = 1; it <= itmax; it++) {
+        eps = 0.0;
+
+        // Вставим попытку выполнить шаги и обработку ошибок
+        int success = 0;
+        if (rank == 0) {
+            fprintf(stdout, "Iteration %d\n", it);
+        }
+
+        relax(size, rank, local_rows);
         resid(rank);
         gather_B_and_update_A(local_rows, rank, size);
-        if (rank == 0){
 
-            fprintf(outf, "it=%4i   eps=%f\n", it,eps);
-        }
-        // printf("%d : %d \n", rank , it);
-		if (eps < maxeps) break;
-		save_checkpoint(rank, size, it);
-	}
-    if (rank == 0)
+        // Проверка завершения
+        if (eps < maxeps) break;
+
+        save_checkpoint(rank, size, it); // Сохраняем контрольную точку
+    }
+
+
+	if (rank == 0)
 	verify(outf);
     if (rank == 0){
         gettimeofday(&end_time, NULL);
@@ -245,3 +256,65 @@ void update_parameters(int size, int rank, int N, int* recvcounts, int* displs,
     *startresid = (rank == 0) ? *start - 1 : *start;
     *stopresid = (rank == size - 1) ? *stop + 1 : *stop;
 }
+
+
+int recover_from_failure(int* rank, int* size, int* it) {
+    MPI_Comm new_comm;
+	it--;
+    // Attempt to shrink the communicator
+    int err = MPI_Comm_shrink(MPI_COMM_WORLD, &new_comm);
+    if (err != MPI_SUCCESS) {
+        fprintf(stderr, "Failed to shrink communicator.\n");
+        return 0;
+    }
+
+    // Update rank and size with the new communicator
+    MPI_Comm_rank(new_comm, rank);
+    MPI_Comm_size(new_comm, size);
+
+    // Update parameters based on the new communicator
+    update_parameters(*size, *rank, N, recvcounts, displs, &start, &stop, &startresid, &stopresid);
+
+    // Allocate memory for local arrays based on the new distribution
+    int local_rows = recvcounts[*rank] / N;
+    free(A_local);
+    free(B_local);
+    A_local = (float*)malloc(local_rows * N * sizeof(float));
+    B_local = (float*)malloc(local_rows * N * sizeof(float));
+
+    // Load the last checkpoint to recover state
+    if (!load_checkpoint(*rank, *size, it)) {
+        fprintf(stderr, "Process %d: Unable to load checkpoint. Exiting...\n", *rank);
+        MPI_Abort(new_comm, 1);
+    }
+
+    // Copy recovered data into local arrays
+    memcpy(A_local, A + displs[*rank], recvcounts[*rank] * sizeof(float));
+    memcpy(B_local, A_local, recvcounts[*rank] * sizeof(float));
+
+    // Update the global communicator
+    MPI_COMM_WORLD = new_comm;
+
+    // Synchronize all processes in the new communicator
+    MPI_Barrier(new_comm);
+
+    return 1;
+}
+
+
+void error_handler_function(MPI_Comm* comm, int* errcode, ...) {
+    char error_string[BUFSIZ];
+    int length_of_error_string;
+
+    MPI_Error_string(*errcode, error_string, &length_of_error_string);
+    fprintf(stderr, "Error in communicator: %s\n", error_string);
+
+    // Call recover function
+    int rank, size, iteration = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    if (!recover_from_failure(&rank, &size, &it)) {
+        MPI_Abort(*comm, *errcode);
+    }
+}
+
