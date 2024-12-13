@@ -144,9 +144,6 @@ int main(int an, char **as)
         relax(size, rank, local_rows);
         resid(rank);
         gather_B_and_update_A(local_rows, rank, size);
-		if (rank == 0 && it == 75){
-			// printMatrix(A, N);
-		}
         if (eps < maxeps) break;
 
         save_checkpoint(rank, size, it);
