@@ -130,12 +130,12 @@ int main(int an, char **as)
             fprintf(stdout, "Iteration %d\n", it);
         }
 
-		if (rank == 4 && size==8 && it == 4){
+		if (rank == 4 && size==28 && it == 4){
 			//printMatrix(A, N);
 			raise(SIGKILL);
 		}
 
-		if (rank == 2 && size == 7 && it == 50){
+		if (rank == 2 && size == 27 && it == 50){
 			raise(SIGKILL);
 		}
 
