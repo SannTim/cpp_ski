@@ -132,11 +132,11 @@ int main(int an, char **as)
 
 		if (rank == 4 && size==8 && it == 4){
 			//printMatrix(A, N);
-			//raise(SIGKILL);
+			raise(SIGKILL);
 		}
 
 		if (rank == 2 && size == 7 && it == 50){
-			//raise(SIGKILL);
+			raise(SIGKILL);
 		}
 
 		

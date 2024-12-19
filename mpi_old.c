@@ -138,7 +138,7 @@ int main(int an, char **as)
 			// printf("-------------------------------\n");
 			raise(SIGKILL);
 		}
-		if (rank == 4 && size == 7 && it == 4)
+		//if (rank == 4 && size == 7 && it == 4)
 			// printMatrix(A, N);
 
 
