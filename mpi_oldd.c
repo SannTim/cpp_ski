@@ -30,9 +30,7 @@ void init();
 void verify(FILE* outf);
 int rank, size;
 void save_checkpoint(int rank, int size, int it);
-void save_checkpoint_io(int rank, int size, int it);
 int load_checkpoint(int rank, int size, int* it);
-int load_checkpoint_io(int rank, int size, int* it);
 void update_parameters(int size, int rank, long long int N, int* recvcounts, int* displs, 
                        int* start, int* stop, int* startresid, int* stopresid, float *B_local);
 int recover_from_failure(int* rank, int* size, int *it);
@@ -133,17 +131,12 @@ int main(int an, char **as)
         }
 
 		if (rank == 4 && size==8 && it == 4){
-			// printf("-------------------------------\n");
 			//printMatrix(A, N);
-			// printf("-------------------------------\n");
-			raise(SIGKILL);
+			//raise(SIGKILL);
 		}
-		if (rank == 4 && size == 7 && it == 4)
-			// printMatrix(A, N);
-
 
 		if (rank == 2 && size == 7 && it == 50){
-			raise(SIGKILL);
+			//raise(SIGKILL);
 		}
 
 		
@@ -153,7 +146,7 @@ int main(int an, char **as)
         gather_B_and_update_A(local_rows, rank, size);
         if (eps < maxeps) break;
 
-        save_checkpoint_io(rank, size, it);
+        save_checkpoint(rank, size, it);
 		if (setjmp(jump_buffer) == 0) {
 			MPI_Barrier(globalcomm);
 		}
@@ -247,34 +240,6 @@ void save_checkpoint(int rank, int size, int it) {
     fclose(file);
 }
 
-void save_checkpoint_io(int rank, int size, int it){
-	MPI_File fil;
-    MPI_Offset offset;
-    MPI_Status stat;
-	const char *file = "checkpoint.bin";
-
-	MPI_File_open (globalcomm, file, MPI_MODE_CREATE| MPI_MODE_WRONLY, MPI_INFO_NULL, &fil);
-	offset = displs[rank] * sizeof(float);
-	// printf("Offset %d : %lld; num_of_elem: %lld; end_of_block: %lld\n", rank, offset, local_rows * N, offset + local_rows*N*sizeof(float));
-	MPI_File_write_at_all(fil, offset, B_local, local_rows * N, MPI_FLOAT, &stat);
-	MPI_File_close(&fil);
-}
-
-
-int load_checkpoint_io(int rank, int size, int* itt) {
-	MPI_File fil;
-    MPI_Offset offset = 0;
-    MPI_Status stat;
-	const char *file = "checkpoint.bin";
-
-	MPI_File_open (globalcomm, file, MPI_MODE_RDONLY, MPI_INFO_NULL, &fil);
-	MPI_File_read_at(fil, offset, A, N*N , MPI_FLOAT, &stat);
-    MPI_File_close(&fil);
-	it--;
-	printf("new it: %d\n", it);
-	return 1;
-}
-
 int load_checkpoint(int rank, int size, int* it) {
     FILE *file = fopen("checkpoint.bin", "rb");
     if (file == NULL) {
@@ -353,7 +318,7 @@ int recover_from_failure(int* rank, int* size, int* it) {
 
     update_parameters(*size, *rank, N, recvcounts, displs, &start, &stop, &startresid, &stopresid, B_local);
 
-    if (!load_checkpoint_io(*rank, *size, it)) {
+    if (!load_checkpoint(*rank, *size, it)) {
         fprintf(stderr, "Process %d: Unable to load checkpoint. Exiting...\n", *rank);
         MPI_Abort(new_comm, 1);
     }
